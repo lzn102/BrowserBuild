@@ -1,0 +1,217 @@
+name: Desktop Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Private source branch, tag, or commit
+        required: true
+        default: main
+        type: string
+      build_target:
+        description: Desktop platform to build
+        required: true
+        default: macos-arm64
+        type: choice
+        options:
+          - macos-arm64
+          - windows-x64
+      run_tests:
+        description: Run verification before packaging
+        required: true
+        default: true
+        type: boolean
+      publish_release:
+        description: Publish directly through the private network
+        required: true
+        default: false
+        type: boolean
+      update_kind:
+        description: Update policy used when publishing
+        required: true
+        default: normal
+        type: choice
+        options:
+          - normal
+          - security
+          - force
+      release_notes:
+        description: Notes shown in the application updater
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-build-${{ inputs.source_ref }}-${{ inputs.build_target }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    if: ${{ inputs.run_tests }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Join private build network
+        uses: tailscale/github-action@306e68a486fd2350f2bfc3b19fcd143891a4a2d8
+        with:
+          oauth-client-id: ${{ secrets.TAILSCALE_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TAILSCALE_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: Fetch private source
+        shell: bash
+        timeout-minutes: 18
+        env:
+          GITEA_DEPLOY_KEY: ${{ secrets.GITEA_DEPLOY_KEY }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+          SOURCE_REPOSITORY: ${{ secrets.GITEA_SOURCE_REPOSITORY }}
+        run: |
+          set -euo pipefail
+          source_host=$(sed -E 's#^[^@]+@([^:]+):.*#\1#' <<< "$SOURCE_REPOSITORY")
+          echo "::add-mask::$SOURCE_REPOSITORY"
+          echo "::add-mask::$source_host"
+          mkdir -p "$HOME/.ssh"
+          key_path="$HOME/.ssh/private-source"
+          trap 'rm -f "$key_path"' EXIT
+          printf '%s\n' "$GITEA_DEPLOY_KEY" > "$key_path"
+          chmod 600 "$key_path"
+          ssh-keyscan -T 10 -H "$source_host" >> "$HOME/.ssh/known_hosts" 2>/dev/null
+          export GIT_SSH_COMMAND="ssh -i $key_path -o IdentitiesOnly=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=3"
+          git init --quiet desktop
+          git -C desktop remote add origin "$SOURCE_REPOSITORY"
+          git -C desktop fetch --quiet --filter=blob:none --depth=1 origin "$SOURCE_REF"
+          git -C desktop checkout --quiet --detach FETCH_HEAD
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+
+      - name: Install Linux system dependencies
+        shell: bash
+        run: |
+          sudo apt-get update -qq >/dev/null
+          sudo apt-get install -y -qq \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libwebkit2gtk-4.1-dev \
+            patchelf >/dev/null
+
+      - name: Verify private source
+        shell: bash
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/verify.log"
+          if ! (cd desktop && make install && make verify) >"$log" 2>&1; then
+            echo "Verification failed. Detailed private-source logs were withheld."
+            exit 1
+          fi
+          echo "Verification completed successfully."
+
+      - name: Remove private source
+        if: ${{ always() }}
+        shell: bash
+        run: rm -rf desktop "$RUNNER_TEMP/verify.log"
+
+  build:
+    needs: verify
+    if: ${{ always() && (needs.verify.result == 'success' || needs.verify.result == 'skipped') }}
+    runs-on: ${{ inputs.build_target == 'windows-x64' && 'windows-latest' || 'macos-15' }}
+    timeout-minutes: 90
+    steps:
+      - name: Join private build network
+        uses: tailscale/github-action@306e68a486fd2350f2bfc3b19fcd143891a4a2d8
+        with:
+          oauth-client-id: ${{ secrets.TAILSCALE_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TAILSCALE_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: Fetch private source
+        shell: bash
+        timeout-minutes: 18
+        env:
+          GITEA_DEPLOY_KEY: ${{ secrets.GITEA_DEPLOY_KEY }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+          SOURCE_REPOSITORY: ${{ secrets.GITEA_SOURCE_REPOSITORY }}
+        run: |
+          set -euo pipefail
+          source_host=$(sed -E 's#^[^@]+@([^:]+):.*#\1#' <<< "$SOURCE_REPOSITORY")
+          echo "::add-mask::$SOURCE_REPOSITORY"
+          echo "::add-mask::$source_host"
+          mkdir -p "$HOME/.ssh"
+          key_path="$HOME/.ssh/private-source"
+          trap 'rm -f "$key_path"' EXIT
+          printf '%s\n' "$GITEA_DEPLOY_KEY" > "$key_path"
+          chmod 600 "$key_path"
+          ssh-keyscan -T 10 -H "$source_host" >> "$HOME/.ssh/known_hosts" 2>/dev/null
+          export GIT_SSH_COMMAND="ssh -i $key_path -o IdentitiesOnly=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=3"
+          git init --quiet desktop
+          git -C desktop remote add origin "$SOURCE_REPOSITORY"
+          git -C desktop fetch --quiet --filter=blob:none --depth=1 origin "$SOURCE_REF"
+          git -C desktop checkout --quiet --detach FETCH_HEAD
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+
+      - name: Build signed application package
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          log="$RUNNER_TEMP/build.log"
+          if ! (cd desktop && npm ci && npm --prefix mcp ci && npm --prefix tooling/ci ci && node scripts/build-app.mjs) >"$log" 2>&1; then
+            echo "Build failed. Detailed private-source logs were withheld."
+            exit 1
+          fi
+          echo "Signed application package built successfully."
+
+      - name: Relay release through private object storage
+        if: ${{ inputs.publish_release }}
+        working-directory: desktop
+        shell: bash
+        env:
+          LUMIBROWSER_API_URL: ${{ secrets.LUMIBROWSER_API_URL }}
+          LUMIBROWSER_R2_ACCESS_KEY_ID: ${{ secrets.LUMIBROWSER_R2_ACCESS_KEY_ID }}
+          LUMIBROWSER_R2_BUCKET: ${{ secrets.LUMIBROWSER_R2_BUCKET }}
+          LUMIBROWSER_R2_ENDPOINT: ${{ secrets.LUMIBROWSER_R2_ENDPOINT }}
+          LUMIBROWSER_R2_SECRET_ACCESS_KEY: ${{ secrets.LUMIBROWSER_R2_SECRET_ACCESS_KEY }}
+          LUMIBROWSER_RELEASE_ARCH: ${{ inputs.build_target == 'windows-x64' && 'x86_64' || 'aarch64' }}
+          LUMIBROWSER_RELEASE_KIND: ${{ inputs.update_kind }}
+          LUMIBROWSER_RELEASE_NOTES: ${{ inputs.release_notes }}
+          LUMIBROWSER_RELEASE_PLATFORM: ${{ inputs.build_target == 'windows-x64' && 'windows' || 'darwin' }}
+          LUMIBROWSER_RELEASE_TOKEN: ${{ secrets.LUMIBROWSER_RELEASE_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "::add-mask::$LUMIBROWSER_API_URL"
+          echo "::add-mask::$LUMIBROWSER_R2_ENDPOINT"
+          if [ "${{ inputs.build_target }}" = "windows-x64" ]; then
+            artifact=$(find build -type f -name '*-setup.exe' -print -quit)
+          else
+            artifact=$(find build -type f -name '*.app.tar.gz' -print -quit)
+          fi
+          if [ -z "$artifact" ] || [ ! -f "$artifact.sig" ]; then
+            echo "Signed release package was not found."
+            exit 1
+          fi
+          export LUMIBROWSER_RELEASE_ARTIFACT="$artifact"
+          log="$RUNNER_TEMP/publish.log"
+          if ! node tooling/ci/publish-r2-relay.mjs >"$log" 2>&1; then
+            echo "Private relay import failed. Detailed release logs were withheld."
+            exit 1
+          fi
+          echo "Release relayed, imported, and removed from temporary storage."
+
+      - name: Remove private source and build output
+        if: ${{ always() }}
+        shell: bash
+        run: rm -rf desktop "$RUNNER_TEMP/build.log" "$RUNNER_TEMP/publish.log"
