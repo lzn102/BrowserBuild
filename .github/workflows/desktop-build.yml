@@ -204,10 +204,10 @@ jobs:
           LUMIBROWSER_R2_BUCKET: ${{ secrets.LUMIBROWSER_R2_BUCKET }}
           LUMIBROWSER_R2_ENDPOINT: ${{ secrets.LUMIBROWSER_R2_ENDPOINT }}
           LUMIBROWSER_R2_SECRET_ACCESS_KEY: ${{ secrets.LUMIBROWSER_R2_SECRET_ACCESS_KEY }}
-          LUMIBROWSER_RELEASE_ARCH: ${{ inputs.build_target == 'windows-x64' && 'x86_64' || 'aarch64' }}
+          LUMIBROWSER_RELEASE_ARCH: ${{ inputs.build_target == 'macos-arm64' && 'aarch64' || 'x86_64' }}
           LUMIBROWSER_RELEASE_KIND: ${{ inputs.update_kind }}
           LUMIBROWSER_RELEASE_NOTES: ${{ inputs.release_notes }}
-          LUMIBROWSER_RELEASE_PLATFORM: ${{ inputs.build_target == 'windows-x64' && 'windows' || 'darwin' }}
+          LUMIBROWSER_RELEASE_PLATFORM: ${{ inputs.build_target == 'windows-x64' && 'windows' || inputs.build_target == 'linux-x64' && 'linux' || 'darwin' }}
           LUMIBROWSER_RELEASE_TOKEN: ${{ secrets.LUMIBROWSER_RELEASE_TOKEN }}
         run: |
           set -euo pipefail
@@ -215,6 +215,8 @@ jobs:
           echo "::add-mask::$LUMIBROWSER_R2_ENDPOINT"
           if [ "${{ inputs.build_target }}" = "windows-x64" ]; then
             artifact=$(find build -type f -name '*-setup.exe' -print -quit)
+          elif [ "${{ inputs.build_target }}" = "linux-x64" ]; then
+            artifact=$(find build -type f -name '*.AppImage.tar.gz' -print -quit)
           else
             artifact=$(find build -type f -name '*.app.tar.gz' -print -quit)
           fi
