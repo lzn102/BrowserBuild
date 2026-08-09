@@ -216,7 +216,7 @@ jobs:
           if [ "${{ inputs.build_target }}" = "windows-x64" ]; then
             artifact=$(find build -type f -name '*-setup.exe' -print -quit)
           elif [ "${{ inputs.build_target }}" = "linux-x64" ]; then
-            artifact=$(find build -type f -name '*.AppImage.tar.gz' -print -quit)
+            artifact=$(find build -type f -name '*.AppImage' -print -quit)
           else
             artifact=$(find build -type f -name '*.app.tar.gz' -print -quit)
           fi
