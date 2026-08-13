@@ -108,7 +108,7 @@ jobs:
         run: |
           set -euo pipefail
           log="$RUNNER_TEMP/verify.log"
-          if ! (cd desktop && make install && make verify) >"$log" 2>&1; then
+          if ! (cd desktop && make install && npx playwright install chromium && make verify) >"$log" 2>&1; then
             echo "Verification failed. Detailed private-source logs were withheld."
             exit 1
           fi
