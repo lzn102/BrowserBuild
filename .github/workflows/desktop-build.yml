@@ -129,7 +129,6 @@ jobs:
                 pnpm exec playwright test \
                   e2e/quality-gates.spec.ts \
                   e2e/proxy-site.spec.ts \
-                  e2e/table-layout.spec.ts \
                   --update-snapshots >"$log" 2>&1 || {
                   echo "Linux snapshot regeneration failed. Sanitized summary:"
                   grep -E '(^[[:space:]]*[0-9]+\)|[0-9]+ failed|Error:)' "$log" | tail -40 || true
