@@ -22,6 +22,11 @@ on:
         required: true
         default: true
         type: boolean
+      update_linux_snapshots:
+        description: Regenerate and export Linux visual baselines before verification
+        required: true
+        default: false
+        type: boolean
       publish_release:
         description: Publish directly through the private network
         required: true
@@ -110,6 +115,8 @@ jobs:
 
       - name: Verify private source
         shell: bash
+        env:
+          UPDATE_LINUX_SNAPSHOTS: ${{ inputs.update_linux_snapshots }}
         run: |
           set -euo pipefail
           log="$RUNNER_TEMP/verify.log"
@@ -118,11 +125,22 @@ jobs:
             echo "Verifying stage: $stage"
             if [ "$stage" = playwright ]; then
               pnpm exec playwright install chromium >"$log" 2>&1 || { echo "Verification failed at $stage. Private logs withheld."; exit 1; }
+              if [ "$UPDATE_LINUX_SNAPSHOTS" = true ]; then
+                pnpm exec playwright test e2e/proxy-site.spec.ts --update-snapshots >"$log" 2>&1 || { echo "Linux snapshot regeneration failed. Private logs withheld."; exit 1; }
+              fi
             else
               make "$stage" >"$log" 2>&1 || { echo "Verification failed at $stage. Private logs withheld."; exit 1; }
             fi
           done
           echo "Verification completed successfully."
+
+      - name: Export Linux visual baselines
+        if: ${{ inputs.update_linux_snapshots }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: linux-visual-baselines
+          path: desktop/e2e/__screenshots__/*-linux.png
+          if-no-files-found: error
 
       - name: Remove private source
         if: ${{ always() }}
