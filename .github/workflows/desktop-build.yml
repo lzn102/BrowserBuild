@@ -15,7 +15,6 @@ on:
         type: choice
         options:
           - macos-arm64
-          - linux-x64
           - windows-x64
       run_tests:
         description: Run verification before packaging
@@ -167,7 +166,7 @@ jobs:
   build:
     needs: verify
     if: ${{ always() && !inputs.update_linux_snapshots && (needs.verify.result == 'success' || needs.verify.result == 'skipped') }}
-    runs-on: ${{ inputs.build_target == 'windows-x64' && 'windows-latest' || inputs.build_target == 'linux-x64' && 'ubuntu-24.04' || 'macos-15' }}
+    runs-on: ${{ inputs.build_target == 'windows-x64' && 'windows-latest' || 'macos-15' }}
     timeout-minutes: 90
     steps:
       - name: Join private build network
@@ -212,24 +211,6 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
 
-      - name: Install Linux build dependencies
-        if: ${{ inputs.build_target == 'linux-x64' }}
-        shell: bash
-        run: |
-          sudo apt-get update -qq >/dev/null
-          sudo apt-get install -y -qq \
-            build-essential \
-            curl \
-            file \
-            libayatana-appindicator3-dev \
-            libgtk-3-dev \
-            librsvg2-dev \
-            libssl-dev \
-            libwebkit2gtk-4.1-dev \
-            libxdo-dev \
-            patchelf \
-            wget >/dev/null
-
       - name: Build signed application package
         shell: bash
         env:
@@ -257,7 +238,7 @@ jobs:
           LUMIBROWSER_RELEASE_ARCH: ${{ inputs.build_target == 'macos-arm64' && 'aarch64' || 'x86_64' }}
           LUMIBROWSER_RELEASE_KIND: ${{ inputs.update_kind }}
           LUMIBROWSER_RELEASE_NOTES: ${{ inputs.release_notes }}
-          LUMIBROWSER_RELEASE_PLATFORM: ${{ inputs.build_target == 'windows-x64' && 'windows' || inputs.build_target == 'linux-x64' && 'linux' || 'darwin' }}
+          LUMIBROWSER_RELEASE_PLATFORM: ${{ inputs.build_target == 'windows-x64' && 'windows' || 'darwin' }}
           LUMIBROWSER_RELEASE_TOKEN: ${{ secrets.LUMIBROWSER_RELEASE_TOKEN }}
         run: |
           set -euo pipefail
@@ -265,8 +246,6 @@ jobs:
           echo "::add-mask::$LUMIBROWSER_R2_ENDPOINT"
           if [ "${{ inputs.build_target }}" = "windows-x64" ]; then
             artifact=$(find build -type f -name '*-setup.exe' -print -quit)
-          elif [ "${{ inputs.build_target }}" = "linux-x64" ]; then
-            artifact=$(find build -type f -name '*.AppImage' -print -quit)
           else
             artifact=$(find build -type f -name '*.app.tar.gz' -print -quit)
           fi
