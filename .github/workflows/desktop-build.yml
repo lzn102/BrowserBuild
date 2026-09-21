@@ -121,7 +121,7 @@ jobs:
           set -euo pipefail
           log="$RUNNER_TEMP/verify.log"
           cd desktop
-          for stage in install playwright lint format-check check quality test test-e2e test-rust test-mcp test-sdk; do
+          for stage in install playwright test-e2e lint format-check check quality test test-rust test-mcp test-sdk; do
             echo "Verifying stage: $stage"
             if [ "$stage" = playwright ]; then
               pnpm exec playwright install chromium >"$log" 2>&1 || { echo "Verification failed at $stage. Private logs withheld."; exit 1; }
@@ -136,7 +136,14 @@ jobs:
                 }
               fi
             else
-              make "$stage" >"$log" 2>&1 || { echo "Verification failed at $stage. Private logs withheld."; exit 1; }
+              make "$stage" >"$log" 2>&1 || {
+                echo "Verification failed at $stage. Private logs withheld."
+                if [ "$stage" = test-e2e ]; then
+                  echo "Sanitized Playwright summary:"
+                  grep -E -A 6 '(^[[:space:]]*[0-9]+\)|Error:|Expected:|Received:|Snapshot:|[[:alnum:]-]+\.spec\.ts:[0-9]+)' "$log" | tail -80 || true
+                fi
+                exit 1
+              }
             fi
           done
           echo "Verification completed successfully."
